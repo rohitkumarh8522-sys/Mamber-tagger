@@ -1,8 +1,12 @@
 import os
 import asyncio
 import html
+import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Debug logging for Render logs
+logging.basicConfig(level=logging.INFO)
 
 # Dummy Web Server for Render Free Web Service
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -49,7 +53,8 @@ async def is_admin(client, chat_id, user_id):
     try:
         member = await client.get_chat_member(chat_id, user_id)
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
-    except Exception:
+    except Exception as e:
+        logging.error(f"Error checking admin status: {e}")
         return False
 
 @app.on_message(filters.command("start", prefixes=["/", "!"]))
@@ -72,6 +77,8 @@ async def start_cmd(client, message: Message):
 async def mention_all(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
+
+    logging.info(f"Command /mtag received in Chat ID: {chat_id} from User ID: {user_id}")
 
     if not await is_admin(client, chat_id, user_id):
         await message.reply_text("❌ Only Group Admins can use this command!")
@@ -119,7 +126,7 @@ async def mention_all(client, message: Message):
                     await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
                     await asyncio.sleep(2)
                 except Exception as e:
-                    print(f"Error sending tags: {e}")
+                    logging.error(f"Error sending tags: {e}")
                 usrnum = 0
                 usrtxt = ""
 
@@ -128,10 +135,10 @@ async def mention_all(client, message: Message):
             try:
                 await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
             except Exception as e:
-                print(f"Error: {e}")
+                logging.error(f"Error: {e}")
 
     except Exception as e:
-        print(f"Loop error: {e}")
+        logging.error(f"Loop error in chat_id {chat_id}: {e}")
         await message.reply_text("❌ Error: Make sure bot is Admin with required rights!")
 
     was_cancelled = not tagging_status.get(chat_id, {}).get("active", False)
