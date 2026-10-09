@@ -1,8 +1,25 @@
 import os
 import asyncio
 import html
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Fix asyncio event loop for Pyrogram on Render
+# Render Web Service ke liye Dummy Web Server (Zero Dependency)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
+# Web server ko background thread me start karein
+threading.Thread(target=run_web_server, daemon=True).start()
+
+# Pyrogram / Asyncio Event Loop Fix
 try:
     loop = asyncio.get_event_loop()
 except RuntimeError:
