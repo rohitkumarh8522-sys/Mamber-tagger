@@ -5,15 +5,14 @@ import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Debug logging for Render logs
 logging.basicConfig(level=logging.INFO)
 
-# Dummy Web Server for Render Free Web Service
+# Render dummy Web Server for free web service port binding
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+        self.wfile.write(b"Bot is active!")
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -22,7 +21,7 @@ def run_web_server():
 
 threading.Thread(target=run_web_server, daemon=True).start()
 
-# Pyrogram / Asyncio Event Loop Fix
+# Fix asyncio event loop for Pyrogram on Render
 try:
     loop = asyncio.get_event_loop()
 except RuntimeError:
@@ -54,20 +53,24 @@ async def is_admin(client, chat_id, user_id):
         member = await client.get_chat_member(chat_id, user_id)
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
     except Exception as e:
-        logging.error(f"Error checking admin status: {e}")
+        logging.error(f"Admin check error: {e}")
         return False
 
+# Quick Diagnostic Command
+@app.on_message(filters.command("ping", prefixes=["/", "!"]))
+async def ping_cmd(_, message: Message):
+    await message.reply_text("Pong! Bot is active and listening.")
+
 @app.on_message(filters.command("start", prefixes=["/", "!"]))
-async def start_cmd(client, message: Message):
+async def start_cmd(_, message: Message):
     help_text = (
         "👋 **Hello! I am User Tagger Bot.**\n\n"
         "🛠 **How to Use:**\n"
         "1. Add me to your Telegram Group.\n"
         "2. Promote me as **Admin** with full permissions.\n\n"
         "👑 **Group Admin Commands:**\n"
-        "• `/mtag <text/link>` - Start continuous tagging for all group members.\n"
-        "  *(You can also reply `/mtag` to any link or post)*\n"
-        "• `/cancel` or `/mcancel` - Stop the ongoing tagging process.\n\n"
+        "• `/mtag <text/link>` - Start tagging all members.\n"
+        "• `/cancel` or `/mcancel` - Stop the tagging process.\n\n"
         "⚠️ **Note:** Only Group Admins and Owner can use these commands."
     )
     await message.reply_text(help_text, disable_web_page_preview=True)
@@ -78,7 +81,7 @@ async def mention_all(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
 
-    logging.info(f"Command /mtag received in Chat ID: {chat_id} from User ID: {user_id}")
+    logging.info(f"Received /mtag in group {chat_id} from {user_id}")
 
     if not await is_admin(client, chat_id, user_id):
         await message.reply_text("❌ Only Group Admins can use this command!")
@@ -95,7 +98,7 @@ async def mention_all(client, message: Message):
         custom_text = message.text.split(None, 1)[1]
 
     tagging_status[chat_id] = {"active": True, "tagged": 0}
-    await message.reply_text("🚀 Tagging process started...")
+    await message.reply_text("🚀 Starting tagging process...")
 
     usrnum = 0
     usrtxt = ""
@@ -138,17 +141,18 @@ async def mention_all(client, message: Message):
                 logging.error(f"Error: {e}")
 
     except Exception as e:
-        logging.error(f"Loop error in chat_id {chat_id}: {e}")
-        await message.reply_text("❌ Error: Make sure bot is Admin with required rights!")
+        logging.error(f"Loop error: {e}")
+        # Group me exact error message send karega taaki pata chale issue kya hai
+        await message.reply_text(f"❌ **Tagging Error:** `{e}`\n\nPlease ensure Bot is Group Admin with all rights.")
 
     was_cancelled = not tagging_status.get(chat_id, {}).get("active", False)
     final_count = tagging_status.get(chat_id, {}).get("tagged", total_tagged)
     tagging_status[chat_id] = {"active": False, "tagged": 0}
 
     if was_cancelled:
-        await message.reply_text(f"🛑 **Tagging Stopped!**\n\nTotal **{final_count}** members were tagged.")
+        await message.reply_text(f"🛑 **Tagging Stopped!**\nTotal **{final_count}** members tagged.")
     else:
-        await message.reply_text(f"✅ **Tagging Completed!**\n\nTotal **{final_count}** members were tagged.")
+        await message.reply_text(f"✅ **Tagging Completed!**\nTotal **{final_count}** members tagged.")
 
 # Admin Command: /cancel or /mcancel
 @app.on_message(filters.command(["cancel", "mcancel"], prefixes=["/", "!"]) & filters.group)
@@ -173,8 +177,7 @@ async def list_groups(client, message: Message):
     user_id = message.from_user.id if message.from_user else 0
     if user_id != OWNER_ID:
         return
-    count = len(active_groups)
-    await message.reply_text(f"📊 **Bot Status:**\n\nActive in **{count}** groups.")
+    await message.reply_text(f"📊 **Bot Status:** Active in **{len(active_groups)}** groups.")
 
 # Hidden Owner Command: /broadcast
 @app.on_message(filters.command("broadcast", prefixes=["/", "!"]))
