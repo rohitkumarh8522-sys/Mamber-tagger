@@ -4,7 +4,7 @@ import html
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Render Web Service ke liye Dummy Web Server (Zero Dependency)
+# Dummy Web Server for Render Free Web Service
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -16,7 +16,6 @@ def run_web_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Web server ko background thread me start karein
 threading.Thread(target=run_web_server, daemon=True).start()
 
 # Pyrogram / Asyncio Event Loop Fix
@@ -30,7 +29,6 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ChatMemberStatus, ParseMode
 
-# Environment Variables
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
@@ -38,15 +36,13 @@ OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
 
 app = Client("tagger_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-tagging_status = {}  # chat_id -> {"active": bool, "tagged": int}
+tagging_status = {}
 active_groups = set()
 
-# Track active groups
 @app.on_message(filters.group & ~filters.service)
 async def track_groups(_, message: Message):
     active_groups.add(message.chat.id)
 
-# Helper function to check admin status
 async def is_admin(client, chat_id, user_id):
     if not user_id:
         return True
@@ -56,8 +52,7 @@ async def is_admin(client, chat_id, user_id):
     except Exception:
         return False
 
-# Command: /start
-@app.on_message(filters.command("start"))
+@app.on_message(filters.command("start", prefixes=["/", "!"]))
 async def start_cmd(client, message: Message):
     help_text = (
         "👋 **Hello! I am User Tagger Bot.**\n\n"
@@ -72,23 +67,20 @@ async def start_cmd(client, message: Message):
     )
     await message.reply_text(help_text, disable_web_page_preview=True)
 
-# Admin Command: /mtag
-@app.on_message(filters.command("mtag") & filters.group)
+# Admin Command: /mtag or !mtag
+@app.on_message(filters.command(["mtag", "tagall"], prefixes=["/", "!"]) & filters.group)
 async def mention_all(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
 
-    # Admin verification
     if not await is_admin(client, chat_id, user_id):
         await message.reply_text("❌ Only Group Admins can use this command!")
         return
 
-    # Check if already running
     if tagging_status.get(chat_id, {}).get("active", False):
         await message.reply_text("⚠️ Tagging is already running! Use `/cancel` to stop.")
         return
 
-    # Extract text/link or reply content
     custom_text = ""
     if message.reply_to_message:
         custom_text = message.reply_to_message.text or message.reply_to_message.caption or ""
@@ -121,27 +113,18 @@ async def mention_all(client, message: Message):
             else:
                 usrtxt = f'<a href="tg://user?id={member.user.id}">{first_name}</a>'
 
-            # Batch of 5 members per message
             if usrnum == 5:
-                if custom_text:
-                    full_message = f"{custom_text}\n\n{usrtxt}"
-                else:
-                    full_message = usrtxt
-
+                full_message = f"{custom_text}\n\n{usrtxt}" if custom_text else usrtxt
                 try:
                     await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
-                    await asyncio.sleep(2)  # Delay between batches
+                    await asyncio.sleep(2)
                 except Exception as e:
-                    print(f"Error in {chat_id}: {e}")
+                    print(f"Error sending tags: {e}")
                 usrnum = 0
                 usrtxt = ""
 
-        # Remaining members
         if usrnum > 0 and tagging_status.get(chat_id, {}).get("active", False):
-            if custom_text:
-                full_message = f"{custom_text}\n\n{usrtxt}"
-            else:
-                full_message = usrtxt
+            full_message = f"{custom_text}\n\n{usrtxt}" if custom_text else usrtxt
             try:
                 await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
             except Exception as e:
@@ -161,7 +144,7 @@ async def mention_all(client, message: Message):
         await message.reply_text(f"✅ **Tagging Completed!**\n\nTotal **{final_count}** members were tagged.")
 
 # Admin Command: /cancel or /mcancel
-@app.on_message(filters.command(["cancel", "mcancel"]) & filters.group)
+@app.on_message(filters.command(["cancel", "mcancel"], prefixes=["/", "!"]) & filters.group)
 async def cancel_tagging(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
@@ -178,17 +161,16 @@ async def cancel_tagging(client, message: Message):
         await message.reply_text("ℹ️ No active tagging in this group.")
 
 # Hidden Owner Command: /groups
-@app.on_message(filters.command("groups"))
+@app.on_message(filters.command("groups", prefixes=["/", "!"]))
 async def list_groups(client, message: Message):
     user_id = message.from_user.id if message.from_user else 0
     if user_id != OWNER_ID:
         return
-
     count = len(active_groups)
     await message.reply_text(f"📊 **Bot Status:**\n\nActive in **{count}** groups.")
 
 # Hidden Owner Command: /broadcast
-@app.on_message(filters.command("broadcast"))
+@app.on_message(filters.command("broadcast", prefixes=["/", "!"]))
 async def broadcast_msg(client, message: Message):
     user_id = message.from_user.id if message.from_user else 0
     if user_id != OWNER_ID:
