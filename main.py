@@ -2,7 +2,7 @@ import os
 import asyncio
 import html
 
-# Render / Newer Python Event Loop Fix
+# Fix asyncio event loop for Pyrogram on Render
 try:
     loop = asyncio.get_event_loop()
 except RuntimeError:
@@ -21,19 +21,18 @@ OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
 
 app = Client("tagger_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Active state tracking
-tagging_status = {}  # chat_id -> {"active": bool, "tagged_count": int}
+tagging_status = {}  # chat_id -> {"active": bool, "tagged": int}
 active_groups = set()
 
-# Automatically track active groups
+# Track active groups
 @app.on_message(filters.group & ~filters.service)
 async def track_groups(_, message: Message):
     active_groups.add(message.chat.id)
 
-# Helper function to check admin rights
+# Helper function to check admin status
 async def is_admin(client, chat_id, user_id):
     if not user_id:
-        return True  # Anonymous admin
+        return True
     try:
         member = await client.get_chat_member(chat_id, user_id)
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
@@ -43,28 +42,18 @@ async def is_admin(client, chat_id, user_id):
 # Command: /start
 @app.on_message(filters.command("start"))
 async def start_cmd(client, message: Message):
-    user_id = message.from_user.id if message.from_user else 0
-    
     help_text = (
-        "👋 <b>नमस्ते! मैं All-Member Tagging Bot हूँ।</b>\n\n"
-        "🛠 <b>बॉट का उपयोग कैसे करें:</b>\n"
-        "1. सबसे पहले मुझे अपने टेलीग्राम ग्रुप में जोड़ें।\n"
-        "2. मुझे ग्रुप का <b>Admin</b> बनाएं (ताकि मैं मेंबर्स को टैग कर सकूँ)।\n\n"
-        "👑 <b>ग्रुप एडमिन कमांड्स:</b>\n"
-        "• <code>/mtag &lt;टेक्स्ट या लिंक&gt;</code> - ग्रुप के सभी मेंबर्स को 10-10 के बैच में टैग करना शुरू करें।\n"
-        "  <i>(आप किसी फोटो या मैसेज को रिप्लाई करके भी /mtag लिख सकते हैं)</i>\n"
-        "• <code>/cancel</code> - टैग करने की प्रक्रिया को बीच में ही रोकें।\n\n"
-        "⚠️ <b>नोट:</b> ये कमांड्स सिर्फ ग्रुप Admin या Owner ही चला सकते हैं।"
+        "👋 **Hello! I am User Tagger Bot.**\n\n"
+        "🛠 **How to Use:**\n"
+        "1. Add me to your Telegram Group.\n"
+        "2. Promote me as **Admin** with full permissions.\n\n"
+        "👑 **Group Admin Commands:**\n"
+        "• `/mtag <text/link>` - Start continuous tagging for all group members.\n"
+        "  *(You can also reply `/mtag` to any link or post)*\n"
+        "• `/cancel` or `/mcancel` - Stop the ongoing tagging process.\n\n"
+        "⚠️ **Note:** Only Group Admins and Owner can use these commands."
     )
-    
-    if user_id == OWNER_ID and message.chat.type.name == "PRIVATE":
-        help_text += (
-            "\n\n🔐 <b>बॉट ओनर कमांड्स (Hidden):</b>\n"
-            "• <code>/groups</code> - बॉट कितने ग्रुप्स में एक्टिव है देखें।\n"
-            "• <code>/broadcast &lt;मैसेज या रिप्लाई&gt;</code> - सभी ग्रुप्स में ब्रॉडकास्ट भेजें।"
-        )
-        
-    await message.reply_text(help_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await message.reply_text(help_text, disable_web_page_preview=True)
 
 # Admin Command: /mtag
 @app.on_message(filters.command("mtag") & filters.group)
@@ -72,30 +61,25 @@ async def mention_all(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
 
-    # Admin check
+    # Admin verification
     if not await is_admin(client, chat_id, user_id):
-        await message.reply_text("❌ यह कमांड सिर्फ ग्रुप Admin या Owner ही इस्तेमाल कर सकते हैं!")
+        await message.reply_text("❌ Only Group Admins can use this command!")
         return
 
     # Check if already running
     if tagging_status.get(chat_id, {}).get("active", False):
-        await message.reply_text("⚠️ इस ग्रुप में टैगिंग पहले से चल रही है! रोकने के लिए <code>/cancel</code> लिखें。", parse_mode=ParseMode.HTML)
+        await message.reply_text("⚠️ Tagging is already running! Use `/cancel` to stop.")
         return
 
-    # Extract custom text or link safely
+    # Extract text/link or reply content
     custom_text = ""
     if message.reply_to_message:
         custom_text = message.reply_to_message.text or message.reply_to_message.caption or ""
     elif len(message.command) > 1:
         custom_text = message.text.split(None, 1)[1]
-    else:
-        custom_text = "📢 ध्यान दें सभी मेंबर्स!"
 
-    custom_text = html.escape(custom_text)
-
-    # Initialize status
-    tagging_status[chat_id] = {"active": True, "tagged_count": 0}
-    await message.reply_text("🚀 टैगिंग प्रक्रिया शुरू हो रही है... (प्रति मैसेज 10 मेंबर्स)")
+    tagging_status[chat_id] = {"active": True, "tagged": 0}
+    await message.reply_text("🚀 Tagging process started...")
 
     usrnum = 0
     usrtxt = ""
@@ -111,62 +95,72 @@ async def mention_all(client, message: Message):
 
             usrnum += 1
             total_tagged += 1
-            tagging_status[chat_id]["tagged_count"] = total_tagged
-            
-            first_name = html.escape(member.user.first_name or "User")
-            usrtxt += f'<a href="tg://user?id={member.user.id}">{first_name}</a> '
+            tagging_status[chat_id]["tagged"] = total_tagged
 
-            # Batch of 10
-            if usrnum == 10:
-                full_message = f"{custom_text}\n\n{usrtxt}"
+            first_name = html.escape(member.user.first_name or "User")
+            
+            if usrtxt:
+                usrtxt += f' , <a href="tg://user?id={member.user.id}">{first_name}</a>'
+            else:
+                usrtxt = f'<a href="tg://user?id={member.user.id}">{first_name}</a>'
+
+            # Batch of 5 members per message
+            if usrnum == 5:
+                if custom_text:
+                    full_message = f"{custom_text}\n\n{usrtxt}"
+                else:
+                    full_message = usrtxt
+
                 try:
-                    await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-                    await asyncio.sleep(3)  # Safe delay
+                    await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
+                    await asyncio.sleep(2)  # Delay between batches
                 except Exception as e:
-                    print(f"Error sending tag in {chat_id}: {e}")
+                    print(f"Error in {chat_id}: {e}")
                 usrnum = 0
                 usrtxt = ""
 
-        # Remaining members (< 10)
+        # Remaining members
         if usrnum > 0 and tagging_status.get(chat_id, {}).get("active", False):
-            full_message = f"{custom_text}\n\n{usrtxt}"
+            if custom_text:
+                full_message = f"{custom_text}\n\n{usrtxt}"
+            else:
+                full_message = usrtxt
             try:
-                await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                await client.send_message(chat_id, full_message, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
             except Exception as e:
-                print(f"Error sending remaining tag in {chat_id}: {e}")
+                print(f"Error: {e}")
 
     except Exception as e:
-        print(f"Error in member loop: {e}")
-        await message.reply_text("❌ त्रुटि: कृपया सुनिश्चित करें कि बॉट ग्रुप का Admin है।")
+        print(f"Loop error: {e}")
+        await message.reply_text("❌ Error: Make sure bot is Admin with required rights!")
 
-    # Finish message
     was_cancelled = not tagging_status.get(chat_id, {}).get("active", False)
-    final_count = tagging_status.get(chat_id, {}).get("tagged_count", total_tagged)
-    tagging_status[chat_id] = {"active": False, "tagged_count": 0}
+    final_count = tagging_status.get(chat_id, {}).get("tagged", total_tagged)
+    tagging_status[chat_id] = {"active": False, "tagged": 0}
 
     if was_cancelled:
-        await message.reply_text(f"🛑 <b>टैगिंग प्रक्रिया रोक दी गई है!</b>\n\nकुल <b>{final_count}</b> मेंबर्स को टैग किया गया।", parse_mode=ParseMode.HTML)
+        await message.reply_text(f"🛑 **Tagging Stopped!**\n\nTotal **{final_count}** members were tagged.")
     else:
-        await message.reply_text(f"✅ <b>टैगिंग पूर्ण हो गई है!</b>\n\nकुल <b>{final_count}</b> मेंबर्स को टैग किया गया।", parse_mode=ParseMode.HTML)
+        await message.reply_text(f"✅ **Tagging Completed!**\n\nTotal **{final_count}** members were tagged.")
 
-# Admin Command: /cancel
-@app.on_message(filters.command("cancel") & filters.group)
+# Admin Command: /cancel or /mcancel
+@app.on_message(filters.command(["cancel", "mcancel"]) & filters.group)
 async def cancel_tagging(client, message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id if message.from_user else None
 
     if not await is_admin(client, chat_id, user_id):
-        await message.reply_text("❌ यह कमांड सिर्फ ग्रुप Admin या Owner ही इस्तेमाल कर सकते हैं!")
+        await message.reply_text("❌ Only Group Admins can use this command!")
         return
 
     if tagging_status.get(chat_id, {}).get("active", False):
-        current_count = tagging_status[chat_id]["tagged_count"]
+        current_count = tagging_status[chat_id]["tagged"]
         tagging_status[chat_id]["active"] = False
-        await message.reply_text(f"🛑 टैगिंग रोकी जा रही है...\nअब तक <b>{current_count}</b> मेंबर्स को टैग किया जा चुका है।", parse_mode=ParseMode.HTML)
+        await message.reply_text(f"🛑 Stopping tagging...\nTagged **{current_count}** members so far.")
     else:
-        await message.reply_text("ℹ️ इस ग्रुप में कोई टैगिंग चालू नहीं है।")
+        await message.reply_text("ℹ️ No active tagging in this group.")
 
-# Bot Owner Command: /groups (Hidden)
+# Hidden Owner Command: /groups
 @app.on_message(filters.command("groups"))
 async def list_groups(client, message: Message):
     user_id = message.from_user.id if message.from_user else 0
@@ -174,9 +168,9 @@ async def list_groups(client, message: Message):
         return
 
     count = len(active_groups)
-    await message.reply_text(f"📊 <b>बॉट स्टेटस:</b>\n\nबॉट अभी कुल <b>{count}</b> ग्रुप्स में एक्टिव है।", parse_mode=ParseMode.HTML)
+    await message.reply_text(f"📊 **Bot Status:**\n\nActive in **{count}** groups.")
 
-# Bot Owner Command: /broadcast (Hidden)
+# Hidden Owner Command: /broadcast
 @app.on_message(filters.command("broadcast"))
 async def broadcast_msg(client, message: Message):
     user_id = message.from_user.id if message.from_user else 0
@@ -184,13 +178,12 @@ async def broadcast_msg(client, message: Message):
         return
 
     if not message.reply_to_message and len(message.command) < 2:
-        await message.reply_text("📢 <b>ब्रॉडकास्ट उपयोग:</b>\n<code>/broadcast &lt;मैसेज&gt;</code> या किसी मैसेज को रिप्लाई करके <code>/broadcast</code> लिखें।", parse_mode=ParseMode.HTML)
+        await message.reply_text("📢 **Broadcast Usage:**\n`/broadcast <text>` or reply to a message.")
         return
 
     sent_count = 0
     failed_count = 0
-
-    status_msg = await message.reply_text("⏳ ब्रॉडकास्ट भेजा जा रहा है...")
+    status_msg = await message.reply_text("⏳ Broadcasting message...")
 
     for g_id in list(active_groups):
         try:
@@ -205,10 +198,9 @@ async def broadcast_msg(client, message: Message):
             failed_count += 1
 
     await status_msg.edit_text(
-        f"📢 <b>ब्रॉडकास्ट प्रक्रिया पूरी हुई!</b>\n\n"
-        f"✅ सफ़ल: <b>{sent_count}</b> ग्रुप्स\n"
-        f"❌ असफ़ल: <b>{failed_count}</b> ग्रुप्स",
-        parse_mode=ParseMode.HTML
+        f"📢 **Broadcast Completed!**\n\n"
+        f"✅ Success: **{sent_count}** groups\n"
+        f"❌ Failed: **{failed_count}** groups"
     )
 
 if __name__ == "__main__":
